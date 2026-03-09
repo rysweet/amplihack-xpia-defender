@@ -435,6 +435,23 @@ impl XPIADefender {
         self.registry.len()
     }
 
+    /// List all registered patterns as serializable structs.
+    pub fn list_patterns(&self) -> Vec<serde_json::Value> {
+        self.registry
+            .all_patterns()
+            .into_iter()
+            .map(|p| {
+                serde_json::json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "category": p.category,
+                    "severity": p.severity,
+                    "description": p.description,
+                })
+            })
+            .collect()
+    }
+
     /// Health check.
     pub fn health_check(&self) -> serde_json::Value {
         serde_json::json!({

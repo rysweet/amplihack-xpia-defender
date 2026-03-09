@@ -6,7 +6,7 @@ use amplihack_xpia_defender::patterns::definitions::all_patterns;
 use amplihack_xpia_defender::patterns::PatternRegistry;
 use amplihack_xpia_defender::{ContentType, XPIADefender};
 
-/// Registry must never panic on any input.
+// Registry must never panic on any input.
 proptest! {
     #[test]
     fn detect_never_panics(s in "\\PC{0,5000}") {

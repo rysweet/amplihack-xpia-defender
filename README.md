@@ -47,8 +47,24 @@ defender.validate_bash_command(command, arguments, context) -> ValidationResult
 // Validate inter-agent communication
 defender.validate_agent_communication(source, target, message, msg_type) -> ValidationResult
 
+// Validate WebFetch requests (URL + prompt)
+defender.validate_webfetch_request(url, prompt, context) -> ValidationResult
+
 // Health check
-defender.health_check() -> HealthReport
+defender.health_check() -> serde_json::Value
+```
+
+### Configuration & introspection
+
+```rust
+// Get current configuration
+defender.configuration() -> &SecurityConfiguration
+
+// Update configuration at runtime
+defender.update_configuration(config)
+
+// Number of loaded attack patterns
+defender.pattern_count() -> usize
 ```
 
 ### Types

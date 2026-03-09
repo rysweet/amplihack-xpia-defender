@@ -145,3 +145,127 @@ fn consumer_serialization() {
     assert!(json.contains("is_valid"));
     assert!(json.contains("risk_level"));
 }
+
+// ── Cycle 3: Tests for previously untested helpers ──────────────
+
+#[test]
+fn helper_severity_to_risk() {
+    assert_eq!(severity_to_risk("low"), RiskLevel::Low);
+    assert_eq!(severity_to_risk("medium"), RiskLevel::Medium);
+    assert_eq!(severity_to_risk("high"), RiskLevel::High);
+    assert_eq!(severity_to_risk("critical"), RiskLevel::Critical);
+    assert_eq!(severity_to_risk("unknown"), RiskLevel::Medium);
+}
+
+#[test]
+fn helper_category_to_threat_type() {
+    assert_eq!(
+        category_to_threat_type(PatternCategory::PromptOverride),
+        ThreatType::Injection
+    );
+    assert_eq!(
+        category_to_threat_type(PatternCategory::DataExfiltration),
+        ThreatType::DataExfiltration
+    );
+    assert_eq!(
+        category_to_threat_type(PatternCategory::SystemEscape),
+        ThreatType::PrivilegeEscalation
+    );
+    assert_eq!(
+        category_to_threat_type(PatternCategory::RoleHijacking),
+        ThreatType::SocialEngineering
+    );
+}
+
+#[test]
+fn helper_is_threat_critical() {
+    let mut defender = XPIADefender::new(None).expect("construction must succeed");
+    let safe = defender.validate_content("hello", ContentType::Text, None, None);
+    assert!(!is_threat_critical(&safe));
+
+    let dangerous = defender.validate_bash_command("rm -rf /", None, None);
+    assert!(is_threat_critical(&dangerous));
+}
+
+#[test]
+fn helper_get_threat_summary() {
+    let mut defender = XPIADefender::new(None).expect("construction must succeed");
+    let safe = defender.validate_content("hello", ContentType::Text, None, None);
+    assert_eq!(get_threat_summary(&safe), "No threats detected");
+
+    let dangerous = defender.validate_bash_command("rm -rf /", None, None);
+    let summary = get_threat_summary(&dangerous);
+    assert!(summary.starts_with("Threats detected:"));
+}
+
+#[test]
+fn helper_patterns_by_category() {
+    use amplihack_xpia_defender::patterns::definitions::all_patterns;
+    use amplihack_xpia_defender::PatternRegistry;
+
+    let registry = PatternRegistry::compile(all_patterns()).expect("must compile");
+    let po = registry.patterns_by_category(PatternCategory::PromptOverride);
+    assert_eq!(po.len(), 4, "should have 4 prompt override patterns");
+
+    let de = registry.patterns_by_category(PatternCategory::DataExfiltration);
+    assert!(de.len() >= 2, "should have data exfiltration patterns");
+}
+
+#[test]
+fn helper_patterns_by_severity() {
+    use amplihack_xpia_defender::patterns::definitions::all_patterns;
+    use amplihack_xpia_defender::PatternRegistry;
+
+    let registry = PatternRegistry::compile(all_patterns()).expect("must compile");
+    let high = registry.patterns_by_severity("high");
+    assert!(!high.is_empty(), "should have high-severity patterns");
+
+    let critical = registry.patterns_by_severity("critical");
+    assert!(
+        !critical.is_empty(),
+        "should have critical-severity patterns"
+    );
+}
+
+#[test]
+fn helper_high_risk_patterns() {
+    use amplihack_xpia_defender::patterns::definitions::all_patterns;
+    use amplihack_xpia_defender::PatternRegistry;
+
+    let registry = PatternRegistry::compile(all_patterns()).expect("must compile");
+    let high_risk = registry.high_risk_patterns();
+    assert!(
+        high_risk.len() >= 5,
+        "should have multiple high-risk patterns"
+    );
+}
+
+#[test]
+fn helper_configuration_methods() {
+    let mut defender = XPIADefender::new(None).expect("construction must succeed");
+    assert_eq!(
+        defender.configuration().security_level,
+        SecurityLevel::Medium
+    );
+
+    defender.update_configuration(SecurityConfiguration {
+        security_level: SecurityLevel::Strict,
+        ..Default::default()
+    });
+    assert_eq!(
+        defender.configuration().security_level,
+        SecurityLevel::Strict
+    );
+}
+
+#[test]
+fn helper_validation_result_methods() {
+    let mut defender = XPIADefender::new(None).expect("construction must succeed");
+
+    let result = defender.validate_bash_command("rm -rf /", None, None);
+    assert!(result.should_block());
+    assert!(result.should_alert());
+
+    let safe = defender.validate_content("hello", ContentType::Text, None, None);
+    assert!(!safe.should_block());
+}

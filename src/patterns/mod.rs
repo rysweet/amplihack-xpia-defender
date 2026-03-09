@@ -212,6 +212,11 @@ impl PatternRegistry {
             .collect()
     }
 
+    /// Get all patterns.
+    pub fn all_patterns(&self) -> Vec<&AttackPattern> {
+        self.compiled.iter().map(|cp| &cp.pattern).collect()
+    }
+
     /// Get high-risk patterns (high + critical).
     pub fn high_risk_patterns(&self) -> Vec<&AttackPattern> {
         self.compiled

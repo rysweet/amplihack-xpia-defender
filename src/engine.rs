@@ -136,12 +136,12 @@ impl XPIADefender {
         let mut whitelist: HashSet<String> =
             DEFAULT_WHITELIST.iter().map(|s| s.to_string()).collect();
 
-        // Load from XPIA_WHITELIST_DOMAINS env var
+        // Load from XPIA_WHITELIST_DOMAINS env var (normalized to lowercase)
         if let Ok(domains) = std::env::var("XPIA_WHITELIST_DOMAINS") {
             for domain in domains.split(',') {
-                let d = domain.trim();
+                let d = domain.trim().to_lowercase();
                 if !d.is_empty() {
-                    whitelist.insert(d.to_string());
+                    whitelist.insert(d);
                 }
             }
         }
@@ -149,9 +149,9 @@ impl XPIADefender {
         let mut blacklist = HashSet::new();
         if let Ok(domains) = std::env::var("XPIA_BLACKLIST_DOMAINS") {
             for domain in domains.split(',') {
-                let d = domain.trim();
+                let d = domain.trim().to_lowercase();
                 if !d.is_empty() {
-                    blacklist.insert(d.to_string());
+                    blacklist.insert(d);
                 }
             }
         }
@@ -401,7 +401,7 @@ impl XPIADefender {
         );
         metadata.insert(
             "prompt_length".to_string(),
-            serde_json::Value::Number(prompt.len().into()),
+            serde_json::Value::Number((prompt.len() as u64).into()),
         );
         metadata.insert("domain".to_string(), serde_json::Value::String(domain));
 
@@ -499,7 +499,7 @@ impl XPIADefender {
         );
         metadata.insert(
             "patterns_detected".to_string(),
-            serde_json::Value::Number(match_count.into()),
+            serde_json::Value::Number((match_count as u64).into()),
         );
 
         Ok(ValidationResult {

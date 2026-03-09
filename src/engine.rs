@@ -531,8 +531,16 @@ impl XPIADefender {
 
         let domain = parsed.host_str().unwrap_or("").to_lowercase();
 
-        // Check blacklist
-        if self.blacklist.contains(&domain) {
+        self.check_domain_threats(&domain, &mut threats);
+        self.check_path_keywords(&parsed, &mut threats);
+        self.check_domain_patterns(&domain, url_str, &mut threats);
+        Self::check_private_addresses(&parsed, &mut threats);
+
+        threats
+    }
+
+    fn check_domain_threats(&self, domain: &str, threats: &mut Vec<ThreatDetection>) {
+        if self.blacklist.contains(domain) {
             threats.push(ThreatDetection {
                 threat_type: ThreatType::MaliciousCode,
                 severity: RiskLevel::Critical,
@@ -541,8 +549,9 @@ impl XPIADefender {
                 mitigation: Some("Block request immediately".to_string()),
             });
         }
+    }
 
-        // Check malicious keywords in path
+    fn check_path_keywords(&self, parsed: &Url, threats: &mut Vec<ThreatDetection>) {
         let path = parsed.path().to_lowercase();
         for keyword in MALICIOUS_URL_KEYWORDS {
             if path.contains(keyword) {
@@ -555,9 +564,15 @@ impl XPIADefender {
                 });
             }
         }
+    }
 
-        // Check suspicious domain patterns (pre-compiled)
-        if self.url_patterns.is_suspicious_domain(&domain) {
+    fn check_domain_patterns(
+        &self,
+        domain: &str,
+        url_str: &str,
+        threats: &mut Vec<ThreatDetection>,
+    ) {
+        if self.url_patterns.is_suspicious_domain(domain) {
             threats.push(ThreatDetection {
                 threat_type: ThreatType::DataExfiltration,
                 severity: RiskLevel::High,
@@ -567,7 +582,6 @@ impl XPIADefender {
             });
         }
 
-        // Check suspicious parameters (pre-compiled)
         if self.url_patterns.has_suspicious_params(url_str) {
             threats.push(ThreatDetection {
                 threat_type: ThreatType::Injection,
@@ -577,47 +591,45 @@ impl XPIADefender {
                 mitigation: Some("Sanitize URL parameters".to_string()),
             });
         }
+    }
 
-        // Check private/local addresses
-        if let Some(host) = parsed.host_str() {
-            // AWS metadata service — always block
-            if host == "169.254.169.254" {
-                threats.push(ThreatDetection {
-                    threat_type: ThreatType::PrivilegeEscalation,
-                    severity: RiskLevel::Critical,
-                    description: "Blocked AWS metadata service access".to_string(),
-                    location: None,
-                    mitigation: Some("AWS metadata access not allowed".to_string()),
-                });
-            } else if let Ok(ip) = host.parse::<IpAddr>() {
-                let is_private = match ip {
-                    IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
-                    IpAddr::V6(v6) => v6.is_loopback(),
-                };
-                if is_private {
-                    threats.push(ThreatDetection {
-                        threat_type: ThreatType::PrivilegeEscalation,
-                        severity: RiskLevel::High,
-                        description: "URL points to local/private address".to_string(),
-                        location: None,
-                        mitigation: Some("Block access to local resources".to_string()),
-                    });
-                }
-            } else {
-                let lower_host = host.to_lowercase();
-                if lower_host == "localhost" || lower_host == "0.0.0.0" || lower_host == "::1" {
-                    threats.push(ThreatDetection {
-                        threat_type: ThreatType::PrivilegeEscalation,
-                        severity: RiskLevel::High,
-                        description: "URL points to local/private address".to_string(),
-                        location: None,
-                        mitigation: Some("Block access to local resources".to_string()),
-                    });
-                }
-            }
+    fn check_private_addresses(parsed: &Url, threats: &mut Vec<ThreatDetection>) {
+        let Some(host) = parsed.host_str() else {
+            return;
+        };
+
+        // AWS metadata service — always block
+        if host == "169.254.169.254" {
+            threats.push(ThreatDetection {
+                threat_type: ThreatType::PrivilegeEscalation,
+                severity: RiskLevel::Critical,
+                description: "Blocked AWS metadata service access".to_string(),
+                location: None,
+                mitigation: Some("AWS metadata access not allowed".to_string()),
+            });
+            return;
         }
 
-        threats
+        if Self::is_local_address(host) {
+            threats.push(ThreatDetection {
+                threat_type: ThreatType::PrivilegeEscalation,
+                severity: RiskLevel::High,
+                description: "URL points to local/private address".to_string(),
+                location: None,
+                mitigation: Some("Block access to local resources".to_string()),
+            });
+        }
+    }
+
+    fn is_local_address(host: &str) -> bool {
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            return match ip {
+                IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
+                IpAddr::V6(v6) => v6.is_loopback(),
+            };
+        }
+        let lower = host.to_lowercase();
+        lower == "localhost" || lower == "0.0.0.0" || lower == "::1"
     }
 
     fn check_combined_attacks(&self, url_str: &str, prompt: &str) -> Vec<ThreatDetection> {

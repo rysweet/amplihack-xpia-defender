@@ -9,6 +9,12 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+/// Subdirectory under $HOME for Claude configuration.
+const CLAUDE_CONFIG_DIR: &str = ".claude";
+
+/// Subdirectory path for XPIA hooks under $HOME.
+const XPIA_HOOKS_SUBPATH: &[&str] = &[".amplihack", ".claude", "tools", "xpia", "hooks"];
+
 /// Health check result for a single component.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentHealth {
@@ -89,7 +95,7 @@ pub fn check_hook_file_exists(hook_path: &str) -> ComponentHealth {
 pub fn check_settings_json_hooks(settings_path: Option<&Path>) -> serde_json::Value {
     let default_path = dirs::home_dir()
         .unwrap_or_default()
-        .join(".claude")
+        .join(CLAUDE_CONFIG_DIR)
         .join("settings.json");
     let path = settings_path.unwrap_or(&default_path);
 
@@ -133,28 +139,10 @@ pub fn check_settings_json_hooks(settings_path: Option<&Path>) -> serde_json::Va
         ("PreToolUse", "pre_tool_use.py"),
     ];
 
-    let mut found: Vec<serde_json::Value> = Vec::new();
-
-    for (hook_type, hook_file) in &expected_hooks {
-        if let Some(entries) = hooks.get(hook_type).and_then(|v| v.as_array()) {
-            for entry in entries {
-                if let Some(hook_list) = entry.get("hooks").and_then(|v| v.as_array()) {
-                    for hook in hook_list {
-                        if let Some(command) = hook.get("command").and_then(|v| v.as_str()) {
-                            if command.contains("xpia") && command.contains(hook_file) {
-                                found.push(serde_json::json!({
-                                    "type": hook_type,
-                                    "file": hook_file,
-                                    "command": command,
-                                    "status": "configured",
-                                }));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let found: Vec<serde_json::Value> = expected_hooks
+        .iter()
+        .flat_map(|(hook_type, hook_file)| find_xpia_hooks(&hooks, hook_type, hook_file))
+        .collect();
 
     let found_count = found.len();
     let expected_count = expected_hooks.len();
@@ -173,11 +161,38 @@ pub fn check_settings_json_hooks(settings_path: Option<&Path>) -> serde_json::Va
     })
 }
 
+/// Extract matching XPIA hooks from a settings.json hooks section.
+fn find_xpia_hooks(
+    hooks: &serde_json::Value,
+    hook_type: &str,
+    hook_file: &str,
+) -> Vec<serde_json::Value> {
+    let Some(entries) = hooks.get(hook_type).and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+
+    entries
+        .iter()
+        .filter_map(|entry| entry.get("hooks").and_then(|v| v.as_array()))
+        .flatten()
+        .filter_map(|hook| hook.get("command").and_then(|v| v.as_str()))
+        .filter(|command| command.contains("xpia") && command.contains(hook_file))
+        .map(|command| {
+            serde_json::json!({
+                "type": hook_type,
+                "file": hook_file,
+                "command": command,
+                "status": "configured",
+            })
+        })
+        .collect()
+}
+
 /// Check if XPIA log directory exists and is writable.
 pub fn check_xpia_log_directory() -> ComponentHealth {
     let log_dir = dirs::home_dir()
         .unwrap_or_default()
-        .join(".claude")
+        .join(CLAUDE_CONFIG_DIR)
         .join("logs")
         .join("xpia");
 
@@ -235,12 +250,10 @@ pub fn check_xpia_log_directory() -> ComponentHealth {
 /// Get expected XPIA hook file paths.
 pub fn get_xpia_hook_paths() -> Vec<String> {
     let home = dirs::home_dir().unwrap_or_default();
-    let hook_base = home
-        .join(".amplihack")
-        .join(".claude")
-        .join("tools")
-        .join("xpia")
-        .join("hooks");
+    let mut hook_base = home;
+    for segment in XPIA_HOOKS_SUBPATH {
+        hook_base = hook_base.join(segment);
+    }
 
     vec![
         hook_base.join("session_start.py").display().to_string(),
@@ -264,20 +277,35 @@ pub fn check_xpia_health(settings_path: Option<&Path>) -> HealthReport {
         recommendations: Vec::new(),
     };
 
-    // Check 1: Settings hooks
+    let settings_status = audit_settings_hooks(&mut report, settings_path);
+    let hooks_ok = audit_hook_files(&mut report);
+    let log_ok = audit_log_directory(&mut report);
+
+    report.overall_status = determine_overall_status(&report.summary);
+    build_recommendations(&mut report, &settings_status, hooks_ok, log_ok);
+
+    report
+}
+
+fn audit_settings_hooks(report: &mut HealthReport, settings_path: Option<&Path>) -> String {
     let settings_check = check_settings_json_hooks(settings_path);
-    let settings_status = settings_check["status"].as_str().unwrap_or("unknown");
+    let status = settings_check["status"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
     report
         .components
-        .insert("settings_hooks".to_string(), settings_check.clone());
+        .insert("settings_hooks".to_string(), settings_check);
     report.summary.total_checks += 1;
-    match settings_status {
+    match status.as_str() {
         "ok" => report.summary.passed_checks += 1,
         "missing_hooks" => report.summary.failed_checks += 1,
         _ => report.summary.warnings += 1,
     }
+    status
+}
 
-    // Check 2: Hook files
+fn audit_hook_files(report: &mut HealthReport) -> bool {
     let hook_paths = get_xpia_hook_paths();
     let mut hook_statuses: Vec<serde_json::Value> = Vec::new();
     let mut all_ok = true;
@@ -300,48 +328,58 @@ pub fn check_xpia_health(settings_path: Option<&Path>) -> HealthReport {
             "message": format!("Checked {} hook files", hook_paths.len()),
         }),
     );
+    all_ok
+}
 
-    // Check 3: Log directory
+fn audit_log_directory(report: &mut HealthReport) -> bool {
     let log_check = check_xpia_log_directory();
     report.summary.total_checks += 1;
-    match log_check.status.as_str() {
-        "ok" | "created" => report.summary.passed_checks += 1,
-        _ => report.summary.failed_checks += 1,
+    let ok = matches!(log_check.status.as_str(), "ok" | "created");
+    if ok {
+        report.summary.passed_checks += 1;
+    } else {
+        report.summary.failed_checks += 1;
     }
     report.components.insert(
         "log_directory".to_string(),
         serde_json::to_value(&log_check).unwrap_or_default(),
     );
+    ok
+}
 
-    // Determine overall status
-    if report.summary.failed_checks == 0 {
-        report.overall_status = if report.summary.warnings == 0 {
+fn determine_overall_status(summary: &HealthSummary) -> String {
+    if summary.failed_checks == 0 {
+        if summary.warnings == 0 {
             "healthy".to_string()
         } else {
             "healthy_with_warnings".to_string()
-        };
-    } else if report.summary.passed_checks > report.summary.failed_checks {
-        report.overall_status = "partially_functional".to_string();
+        }
+    } else if summary.passed_checks > summary.failed_checks {
+        "partially_functional".to_string()
     } else {
-        report.overall_status = "unhealthy".to_string();
+        "unhealthy".to_string()
     }
+}
 
-    // Add recommendations
+fn build_recommendations(
+    report: &mut HealthReport,
+    settings_status: &str,
+    hooks_ok: bool,
+    log_ok: bool,
+) {
     if settings_status == "missing_hooks" {
         report
             .recommendations
             .push("Run installation process to configure XPIA hooks in settings.json".to_string());
     }
-    if !all_ok {
+    if !hooks_ok {
         report
             .recommendations
             .push("Verify XPIA hook files are installed and executable".to_string());
     }
-    if !matches!(log_check.status.as_str(), "ok" | "created") {
+    if !log_ok {
         report
             .recommendations
             .push("Fix XPIA log directory permissions".to_string());
     }
-
-    report
 }

@@ -256,11 +256,16 @@ pub struct PatternMatch<'a> {
     pub location: Option<MatchLocation>,
 }
 
-/// URL-specific security patterns.
-pub struct URLPatterns;
+/// Pre-compiled URL-specific security patterns.
+///
+/// All patterns are compiled once at construction. Compilation failure is a
+/// hard error — NO FALLBACKS, no silent skipping.
+pub struct URLPatterns {
+    domain_patterns: Vec<Regex>,
+    param_patterns: Vec<Regex>,
+}
 
 impl URLPatterns {
-    /// Suspicious TLD patterns.
     const SUSPICIOUS_DOMAINS: &'static [&'static str] = &[
         r"(?i).*\.(tk|ml|ga|cf)$",
         r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$",
@@ -269,7 +274,6 @@ impl URLPatterns {
         r"(?i).*\.(exe|dll|bat|cmd|scr|vbs|js)$",
     ];
 
-    /// Suspicious URL parameter patterns.
     const SUSPICIOUS_PARAMS: &'static [&'static str] = &[
         r"(?i)(cmd|command|exec|execute|system|eval|import)",
         r"(?i)(password|passwd|pwd|token|key|secret)",
@@ -278,33 +282,54 @@ impl URLPatterns {
         r"(?i)(union\s+select|drop\s+table|insert\s+into)",
     ];
 
+    /// Compile all URL patterns. Fails hard on any compilation error.
+    pub fn compile() -> Result<Self, XPIAError> {
+        let domain_patterns = Self::SUSPICIOUS_DOMAINS
+            .iter()
+            .map(|s| {
+                Regex::new(s).map_err(|e| {
+                    XPIAError::PatternCompilation(format!(
+                        "URL domain pattern failed to compile: {s}: {e}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let param_patterns = Self::SUSPICIOUS_PARAMS
+            .iter()
+            .map(|s| {
+                Regex::new(s).map_err(|e| {
+                    XPIAError::PatternCompilation(format!(
+                        "URL param pattern failed to compile: {s}: {e}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
+            domain_patterns,
+            param_patterns,
+        })
+    }
+
     /// Check if domain matches suspicious patterns.
-    pub fn is_suspicious_domain(domain: &str) -> bool {
-        for pat_str in Self::SUSPICIOUS_DOMAINS {
-            if let Ok(re) = Regex::new(pat_str) {
-                if re.is_match(domain) {
-                    return true;
-                }
-            }
-        }
-        false
+    pub fn is_suspicious_domain(&self, domain: &str) -> bool {
+        self.domain_patterns.iter().any(|re| re.is_match(domain))
     }
 
     /// Check if URL contains suspicious parameters.
-    pub fn has_suspicious_params(url_str: &str) -> bool {
-        for pat_str in Self::SUSPICIOUS_PARAMS {
-            if let Ok(re) = Regex::new(pat_str) {
-                if re.is_match(url_str) {
-                    return true;
-                }
-            }
-        }
-        false
+    pub fn has_suspicious_params(&self, url_str: &str) -> bool {
+        self.param_patterns.iter().any(|re| re.is_match(url_str))
     }
 }
 
-/// Prompt-specific validation patterns.
-pub struct PromptPatterns;
+/// Pre-compiled prompt-specific validation patterns.
+///
+/// All patterns are compiled once at construction. Compilation failure is a
+/// hard error — NO FALLBACKS, no silent skipping.
+pub struct PromptPatterns {
+    prompt_patterns: Vec<Regex>,
+}
 
 impl PromptPatterns {
     /// Maximum safe prompt length.
@@ -317,16 +342,25 @@ impl PromptPatterns {
         r"(?i)(execute|run|eval)\s+(arbitrary|any|all)\s+(code|command)",
     ];
 
+    /// Compile all prompt patterns. Fails hard on any compilation error.
+    pub fn compile() -> Result<Self, XPIAError> {
+        let prompt_patterns = Self::SUSPICIOUS_PROMPTS
+            .iter()
+            .map(|s| {
+                Regex::new(s).map_err(|e| {
+                    XPIAError::PatternCompilation(format!(
+                        "Prompt pattern failed to compile: {s}: {e}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self { prompt_patterns })
+    }
+
     /// Check if prompt contains suspicious patterns.
-    pub fn is_suspicious_prompt(prompt: &str) -> bool {
-        for pat_str in Self::SUSPICIOUS_PROMPTS {
-            if let Ok(re) = Regex::new(pat_str) {
-                if re.is_match(prompt) {
-                    return true;
-                }
-            }
-        }
-        false
+    pub fn is_suspicious_prompt(&self, prompt: &str) -> bool {
+        self.prompt_patterns.iter().any(|re| re.is_match(prompt))
     }
 
     /// Check if prompt exceeds safe length.

@@ -41,16 +41,16 @@ const DANGEROUS_COMMANDS: &[&str] = &[
     "chmod 777 /",
 ];
 
-/// Privilege escalation regex patterns for bash commands.
-const PRIVILEGE_ESCALATION_PATTERNS: &[&str] = &[
+/// Privilege escalation regex pattern sources for bash commands.
+const PRIVILEGE_ESCALATION_SOURCES: &[&str] = &[
     r"\bsudo\s+su\b",
     r"\bchmod\s+777\s+/etc",
     r"\busermod\s+-[aG]+\s+sudo",
     r"\bsu\s+-\b",
 ];
 
-/// Command injection regex patterns for bash commands.
-const INJECTION_PATTERNS: &[&str] = &[
+/// Command injection regex pattern sources for bash commands.
+const INJECTION_SOURCES: &[&str] = &[
     r";\s*rm",
     r"&&\s*curl",
     r"\|\s*nc",
@@ -58,6 +58,44 @@ const INJECTION_PATTERNS: &[&str] = &[
     r"\$\(.*\)",
     r">\s*/dev/",
 ];
+
+/// Pre-compiled bash validation patterns.
+struct BashPatterns {
+    privilege_escalation: Vec<Regex>,
+    injection: Vec<Regex>,
+}
+
+impl BashPatterns {
+    /// Compile all bash patterns. Fails hard on any compilation error.
+    fn compile() -> Result<Self, XPIAError> {
+        let privilege_escalation = PRIVILEGE_ESCALATION_SOURCES
+            .iter()
+            .map(|s| {
+                Regex::new(s).map_err(|e| {
+                    XPIAError::PatternCompilation(format!(
+                        "Privilege escalation pattern failed to compile: {s}: {e}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let injection = INJECTION_SOURCES
+            .iter()
+            .map(|s| {
+                Regex::new(s).map_err(|e| {
+                    XPIAError::PatternCompilation(format!(
+                        "Injection pattern failed to compile: {s}: {e}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
+            privilege_escalation,
+            injection,
+        })
+    }
+}
 
 /// Malicious keywords in URL paths.
 const MALICIOUS_URL_KEYWORDS: &[&str] = &[
@@ -74,6 +112,9 @@ const MALICIOUS_URL_KEYWORDS: &[&str] = &[
 pub struct XPIADefender {
     config: SecurityConfiguration,
     registry: PatternRegistry,
+    url_patterns: URLPatterns,
+    prompt_patterns: PromptPatterns,
+    bash_patterns: BashPatterns,
     whitelist: HashSet<String>,
     blacklist: HashSet<String>,
     security_events: Vec<serde_json::Value>,
@@ -83,11 +124,14 @@ impl XPIADefender {
     /// Create a new defender with optional configuration.
     ///
     /// # Errors
-    /// Returns error if pattern compilation fails. This is a hard error —
+    /// Returns error if ANY pattern compilation fails. This is a hard error —
     /// NO FALLBACKS, no silent skipping.
     pub fn new(config: Option<SecurityConfiguration>) -> Result<Self, XPIAError> {
         let config = config.unwrap_or_default();
         let registry = PatternRegistry::compile(all_patterns())?;
+        let url_patterns = URLPatterns::compile()?;
+        let prompt_patterns = PromptPatterns::compile()?;
+        let bash_patterns = BashPatterns::compile()?;
 
         let mut whitelist: HashSet<String> =
             DEFAULT_WHITELIST.iter().map(|s| s.to_string()).collect();
@@ -115,6 +159,9 @@ impl XPIADefender {
         Ok(Self {
             config,
             registry,
+            url_patterns,
+            prompt_patterns,
+            bash_patterns,
             whitelist,
             blacklist,
             security_events: Vec::new(),
@@ -172,33 +219,29 @@ impl XPIADefender {
             }
         }
 
-        // Check privilege escalation patterns
-        for pat_str in PRIVILEGE_ESCALATION_PATTERNS {
-            if let Ok(re) = Regex::new(pat_str) {
-                if re.is_match(&full_command) {
-                    threats.push(ThreatDetection {
-                        threat_type: ThreatType::PrivilegeEscalation,
-                        severity: RiskLevel::High,
-                        description: "Privilege escalation attempt detected".to_string(),
-                        location: None,
-                        mitigation: Some("Block and review command".to_string()),
-                    });
-                }
+        // Check privilege escalation patterns (pre-compiled)
+        for re in &self.bash_patterns.privilege_escalation {
+            if re.is_match(&full_command) {
+                threats.push(ThreatDetection {
+                    threat_type: ThreatType::PrivilegeEscalation,
+                    severity: RiskLevel::High,
+                    description: "Privilege escalation attempt detected".to_string(),
+                    location: None,
+                    mitigation: Some("Block and review command".to_string()),
+                });
             }
         }
 
-        // Check command injection patterns
-        for pat_str in INJECTION_PATTERNS {
-            if let Ok(re) = Regex::new(pat_str) {
-                if re.is_match(&full_command) {
-                    threats.push(ThreatDetection {
-                        threat_type: ThreatType::Injection,
-                        severity: RiskLevel::High,
-                        description: "Command injection pattern detected".to_string(),
-                        location: None,
-                        mitigation: Some("Sanitize command input".to_string()),
-                    });
-                }
+        // Check command injection patterns (pre-compiled)
+        for re in &self.bash_patterns.injection {
+            if re.is_match(&full_command) {
+                threats.push(ThreatDetection {
+                    threat_type: ThreatType::Injection,
+                    severity: RiskLevel::High,
+                    description: "Command injection pattern detected".to_string(),
+                    location: None,
+                    mitigation: Some("Sanitize command input".to_string()),
+                });
             }
         }
 
@@ -319,6 +362,17 @@ impl XPIADefender {
             Some(self.config.security_level),
         );
         threats.extend(prompt_result.threats);
+
+        // Check suspicious prompt patterns (pre-compiled)
+        if self.prompt_patterns.is_suspicious_prompt(prompt) {
+            threats.push(ThreatDetection {
+                threat_type: ThreatType::Injection,
+                severity: RiskLevel::High,
+                description: "Prompt contains suspicious patterns".to_string(),
+                location: None,
+                mitigation: Some("Review prompt for injection attempts".to_string()),
+            });
+        }
 
         // Check combined attacks
         threats.extend(self.check_combined_attacks(url_str, prompt));
@@ -502,8 +556,8 @@ impl XPIADefender {
             }
         }
 
-        // Check suspicious domain patterns
-        if URLPatterns::is_suspicious_domain(&domain) {
+        // Check suspicious domain patterns (pre-compiled)
+        if self.url_patterns.is_suspicious_domain(&domain) {
             threats.push(ThreatDetection {
                 threat_type: ThreatType::DataExfiltration,
                 severity: RiskLevel::High,
@@ -513,8 +567,8 @@ impl XPIADefender {
             });
         }
 
-        // Check suspicious parameters
-        if URLPatterns::has_suspicious_params(url_str) {
+        // Check suspicious parameters (pre-compiled)
+        if self.url_patterns.has_suspicious_params(url_str) {
             threats.push(ThreatDetection {
                 threat_type: ThreatType::Injection,
                 severity: RiskLevel::High,

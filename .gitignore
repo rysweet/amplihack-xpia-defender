@@ -1,0 +1,17 @@
+/target
+Cargo.lock
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+*.iml
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Rust backup files
+**/*.rs.bk

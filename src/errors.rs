@@ -4,6 +4,7 @@ use thiserror::Error;
 
 /// All errors that can occur in the XPIA defense system.
 #[derive(Debug, Error)]
+#[must_use = "XPIA errors indicate security failures — do not discard"]
 pub enum XPIAError {
     /// A pattern failed to compile in guaranteed-linear mode.
     /// This is always a bug — all patterns must compile.

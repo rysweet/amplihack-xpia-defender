@@ -92,6 +92,7 @@ pub struct ThreatDetection {
 
 /// Result of security validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[must_use = "validation results must be checked — ignoring them bypasses security"]
 pub struct ValidationResult {
     pub is_valid: bool,
     pub risk_level: RiskLevel,

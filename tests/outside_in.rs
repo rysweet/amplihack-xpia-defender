@@ -269,3 +269,55 @@ fn helper_validation_result_methods() {
     let safe = defender.validate_content("hello", ContentType::Text, None, None);
     assert!(!safe.should_block());
 }
+
+#[test]
+fn cm002_hash_comment_detection() {
+    use amplihack_xpia_defender::patterns::definitions::all_patterns;
+    use amplihack_xpia_defender::PatternRegistry;
+
+    let registry = PatternRegistry::compile(all_patterns()).expect("must compile");
+
+    // Hash comment with hidden instruction — CM002 must detect this
+    let matches = registry.detect("# eval system");
+    let cm002_found = matches.iter().any(|m| m.pattern.id == "CM002");
+    assert!(
+        cm002_found,
+        "CM002 must detect hash comment hidden instructions"
+    );
+}
+
+#[test]
+fn cm002_hash_comment_specific_detection() {
+    use amplihack_xpia_defender::patterns::definitions::all_patterns;
+    use amplihack_xpia_defender::PatternRegistry;
+
+    let registry = PatternRegistry::compile(all_patterns()).expect("must compile");
+
+    // All comment styles must be detected
+    for (input, style) in [
+        ("<!-- ignore safety -->", "HTML"),
+        ("// execute system command", "JS"),
+        ("# run eval exploit", "hash"),
+        ("/* ignore validation */", "C-block"),
+    ] {
+        let matches = registry.detect(input);
+        let cm002_found = matches.iter().any(|m| m.pattern.id == "CM002");
+        assert!(cm002_found, "CM002 must detect {style} comment: {input}");
+    }
+}
+
+#[test]
+fn bash_recommendations_include_malicious_code() {
+    let mut defender = XPIADefender::new(None).expect("must construct");
+    let result = defender.validate_bash_command("rm -rf /", None, None);
+    // MaliciousCode threat should produce "Block code execution" recommendation
+    let has_block_rec = result
+        .recommendations
+        .iter()
+        .any(|r| r.contains("Block code execution"));
+    assert!(
+        has_block_rec,
+        "bash validation with MaliciousCode threat must recommend blocking. Got: {:?}",
+        result.recommendations
+    );
+}

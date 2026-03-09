@@ -272,11 +272,13 @@ impl XPIADefender {
             );
         }
 
+        let recommendations = self.generate_recommendations(&threats, self.config.security_level);
+
         ValidationResult {
             is_valid,
             risk_level,
             threats,
-            recommendations: content_result.recommendations,
+            recommendations,
             metadata,
             timestamp: Utc::now(),
         }

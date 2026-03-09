@@ -4,7 +4,7 @@
 //! All validation methods are synchronous (no async needed for pure computation).
 //! Errors fail closed — any internal error results in content being blocked.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 
 use chrono::Utc;
@@ -108,6 +108,9 @@ const MALICIOUS_URL_KEYWORDS: &[&str] = &[
     "ransomware",
 ];
 
+/// Maximum number of security events retained in memory.
+const MAX_SECURITY_EVENTS: usize = 10_000;
+
 /// Core XPIA defense engine.
 pub struct XPIADefender {
     config: SecurityConfiguration,
@@ -117,7 +120,7 @@ pub struct XPIADefender {
     bash_patterns: BashPatterns,
     whitelist: HashSet<String>,
     blacklist: HashSet<String>,
-    security_events: Vec<serde_json::Value>,
+    security_events: VecDeque<serde_json::Value>,
 }
 
 impl XPIADefender {
@@ -164,7 +167,7 @@ impl XPIADefender {
             bash_patterns,
             whitelist,
             blacklist,
-            security_events: Vec::new(),
+            security_events: VecDeque::new(),
         })
     }
 
@@ -723,7 +726,10 @@ impl XPIADefender {
             })),
         });
 
-        self.security_events.push(event);
+        self.security_events.push_back(event);
+        if self.security_events.len() > MAX_SECURITY_EVENTS {
+            self.security_events.pop_front();
+        }
     }
 }
 

@@ -164,7 +164,7 @@ fn cli_patterns_lists_all() {
     assert!(output.status.success());
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let arr = result.as_array().unwrap();
-    assert_eq!(arr.len(), 31);
+    assert_eq!(arr.len(), 40);
     assert!(arr[0]["id"].is_string());
     assert!(arr[0]["name"].is_string());
 }

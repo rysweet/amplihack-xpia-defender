@@ -67,4 +67,4 @@ jobs:
         run: |
           echo "test content" | ./target/release/xpia-defend validate-content --security-level medium
           ./target/release/xpia-defend health
-          ./target/release/xpia-defend patterns --count
+          ./target/release/xpia-defend patterns | head -5

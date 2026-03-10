@@ -130,8 +130,8 @@ fn consumer_pattern_count() {
     let defender = XPIADefender::new(None).expect("construction must succeed");
     assert_eq!(
         defender.pattern_count(),
-        19,
-        "must have exactly 19 patterns"
+        31,
+        "must have exactly 31 patterns"
     );
 }
 
@@ -205,7 +205,7 @@ fn helper_patterns_by_category() {
 
     let registry = PatternRegistry::compile(all_patterns()).expect("must compile");
     let po = registry.patterns_by_category(PatternCategory::PromptOverride);
-    assert_eq!(po.len(), 4, "should have 4 prompt override patterns");
+    assert_eq!(po.len(), 6, "should have 6 prompt override patterns");
 
     let de = registry.patterns_by_category(PatternCategory::DataExfiltration);
     assert!(de.len() >= 2, "should have data exfiltration patterns");

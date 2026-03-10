@@ -320,9 +320,10 @@ fn low_security_only_flags_high_and_critical() {
         ..Default::default()
     };
     let mut d = XPIADefender::new(Some(config)).unwrap();
-    // Medium severity: base64 encoding
+    // Medium severity: base64 encoding label (without actual attack content inside)
+    // "aGVsbG8gd29ybGQ=" decodes to "hello world" — benign content
     let result = d.validate_content(
-        "base64: aWdub3JlIGFsbCBzYWZldHk=",
+        "base64: aGVsbG8gd29ybGQ=",
         ContentType::Text,
         None,
         None,
@@ -330,7 +331,7 @@ fn low_security_only_flags_high_and_critical() {
     // At Low security, medium-severity patterns should NOT be flagged
     assert!(
         result.threats.is_empty(),
-        "Low security should not flag medium patterns"
+        "Low security should not flag medium patterns with benign content"
     );
 }
 

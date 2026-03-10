@@ -130,8 +130,8 @@ fn consumer_pattern_count() {
     let defender = XPIADefender::new(None).expect("construction must succeed");
     assert_eq!(
         defender.pattern_count(),
-        37,
-        "must have exactly 37 patterns"
+        40,
+        "must have exactly 40 patterns"
     );
 }
 

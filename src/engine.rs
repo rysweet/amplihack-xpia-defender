@@ -59,10 +59,28 @@ const INJECTION_SOURCES: &[&str] = &[
     r">\s*/dev/",
 ];
 
+/// Network exfiltration regex pattern sources for bash commands.
+const NETWORK_EXFIL_SOURCES: &[&str] = &[
+    // curl/wget posting sensitive data
+    r"(?i)\bcurl\b[^\n]*(-d\s+@|--data-binary\s+@|--upload-file\s+|--data\s+@)[^\n]*(/etc/|\.ssh/|\.env|\.aws/|config\b|shadow|passwd|secret|key|token|credential)",
+    r"(?i)\bcurl\b[^\n]*(/etc/|\.ssh/|\.env|\.aws/|config\b|shadow|passwd|secret|key|token|credential)[^\n]*(-d\s+@|--data-binary|--upload-file|--data\s+@)",
+    r"(?i)\bcurl\b[^\n]*\bhttps?://[^\s]*[^\n]*-d\s+@/",
+    // nc/netcat exfiltration
+    r"(?i)\b(nc|netcat)\b[^\n]*-e\s+/bin/(ba)?sh",
+    r"(?i)\|\s*(nc|netcat)\s+\S+\s+\d+",
+    // scp to external hosts
+    r"(?i)\bscp\b[^\n]*(/etc/|\.ssh/|\.env|\.aws/|shadow|passwd|secret|key|token|credential)[^\n]*\w+@",
+    // piping sensitive files to network tools
+    r"(?i)cat\s+[^\n]*(/etc/shadow|/etc/passwd|\.ssh/id_rsa|\.env|\.aws/credentials)[^\n]*\|\s*(curl|nc|netcat|wget)",
+    // env dump via network
+    r"(?i)\benv\b[^\n]*\|\s*(curl|nc|netcat|wget)",
+];
+
 /// Pre-compiled bash validation patterns.
 struct BashPatterns {
     privilege_escalation: Vec<Regex>,
     injection: Vec<Regex>,
+    network_exfil: Vec<Regex>,
 }
 
 impl BashPatterns {
@@ -90,9 +108,21 @@ impl BashPatterns {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let network_exfil = NETWORK_EXFIL_SOURCES
+            .iter()
+            .map(|s| {
+                Regex::new(s).map_err(|e| {
+                    XPIAError::PatternCompilation(format!(
+                        "Network exfil pattern failed to compile: {s}: {e}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Self {
             privilege_escalation,
             injection,
+            network_exfil,
         })
     }
 }
@@ -245,6 +275,20 @@ impl XPIADefender {
                     location: None,
                     mitigation: Some("Sanitize command input".to_string()),
                 });
+            }
+        }
+
+        // Check network exfiltration patterns (pre-compiled)
+        for re in &self.bash_patterns.network_exfil {
+            if re.is_match(&full_command) {
+                threats.push(ThreatDetection {
+                    threat_type: ThreatType::DataExfiltration,
+                    severity: RiskLevel::Critical,
+                    description: "Network data exfiltration attempt detected".to_string(),
+                    location: None,
+                    mitigation: Some("Block data transmission to external hosts".to_string()),
+                });
+                break; // One match is enough
             }
         }
 

@@ -265,7 +265,7 @@ pub fn all_patterns() -> Vec<RawPattern> {
             // \bDAN\b requires attack context (act as, enable, activate, I am) to avoid
             // matching tech terms like "DAN protocol". Case-sensitive "DAN" (all-caps) only
             // matches with attack verbs; "Do Anything Now" and jailbreak terms match broadly.
-            regex_source: r"(?i)(act\s+as|enable|activate|enter|switch\s+to|I\s+am)\s+\bDAN\b|Do Anything Now|jailbreak|unrestricted mode|(enable|activate|enter|switch\s+to)\s+developer mode|god mode",
+            regex_source: r"(?i)(act\s+as|pretend\s+(you\s+are|to\s+be)|enable|activate|enter|switch\s+to|I\s+am|you\s+are(\s+now)?)\s+\bDAN\b|Do Anything Now|jailbreak|unrestricted mode|(enable|activate|enter|switch\s+to)\s+developer mode|god mode",
             ac_literals: &[
                 "DAN",
                 "Do Anything Now",
@@ -468,7 +468,7 @@ pub fn all_patterns() -> Vec<RawPattern> {
                 ],
             },
             // scp/rsync only flagged when source is a sensitive file path, not all scp usage
-            regex_source: r"(?i)(scp|rsync)\s+[^\s]*(\.ssh/|\.aws/|\.git-credentials|\.netrc|\.pgpass|/etc/passwd|/etc/shadow|\.env)\s+[^\s]*@|cat\s+[^\s]*(\.git-credentials|\.ssh/id_rsa|\.ssh/id_ed25519|\.aws/credentials|\.netrc|\.pgpass)|cat\s+/proc/(self|[0-9]+)/(maps|mem|environ|cmdline)",
+            regex_source: r"(?i)(scp|rsync)\s+[^\s]*(\.ssh/|\.aws/|\.git-credentials|\.netrc|\.pgpass|/etc/passwd|/etc/shadow|\.env)[^\s]*\s+[^\s]*@|cat\s+[^\s]*(\.git-credentials|\.ssh/id_rsa|\.ssh/id_ed25519|\.aws/credentials|\.netrc|\.pgpass)|cat\s+/proc/(self|[0-9]+)/(maps|mem|environ|cmdline)",
             ac_literals: &["scp", "rsync", ".git-credentials", ".ssh/", ".aws/", "/proc/"],
             special: SpecialMatch::None,
         },

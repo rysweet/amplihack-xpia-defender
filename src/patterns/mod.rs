@@ -139,27 +139,71 @@ impl PatternRegistry {
 
     /// Detect all matching patterns in the given text.
     pub fn detect(&self, text: &str) -> Vec<PatternMatch<'_>> {
-        // Run detection on normalized input (whitespace collapsed to spaces)
-        let normalized = Self::normalize_input(text);
-        let mut results = self.detect_inner(&normalized);
+        let mut existing: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut results: Vec<PatternMatch<'_>> = Vec::new();
 
-        // Also run on stripped input (newlines/tabs removed entirely) to catch
-        // evasion via mid-word line breaks like "act\nas DAN" → "actas DAN"
-        // won't match, but "act a\ns DAN" → "act as DAN" will.
+        // Pass 1: Whitespace-normalized (spaces collapsed, zero-width stripped)
+        let normalized = Self::normalize_input(text);
+        self.merge_pass(&normalized, &mut results, &mut existing);
+
+        // Pass 2: Newline-stripped (catches mid-word line break evasion)
         let stripped = Self::strip_whitespace_evasion(text);
         if stripped != normalized {
-            let stripped_results = self.detect_inner(&stripped);
-            // Merge: add any patterns not already detected
-            let existing: std::collections::HashSet<&str> =
-                results.iter().map(|r| r.pattern.id).collect();
-            for r in stripped_results {
-                if !existing.contains(r.pattern.id) {
-                    results.push(r);
-                }
-            }
+            self.merge_pass(&stripped, &mut results, &mut existing);
+        }
+
+        // Pass 3: URL-decoded (catches %20-style encoding)
+        let url_decoded = Self::url_decode(text);
+        if url_decoded != normalized {
+            let url_norm = Self::normalize_input(&url_decoded);
+            self.merge_pass(&url_norm, &mut results, &mut existing);
+        }
+
+        // Pass 4: Leet speak normalized (1→i, 3→e, 4→a, 0→o, etc.)
+        let leet_norm = Self::normalize_leet(&normalized);
+        if leet_norm != normalized {
+            self.merge_pass(&leet_norm, &mut results, &mut existing);
+        }
+
+        // Pass 5: Character spacing collapsed ("i g n o r e" → "ignore")
+        let spacing_collapsed = Self::collapse_char_spacing(&normalized);
+        if spacing_collapsed != normalized {
+            self.merge_pass(&spacing_collapsed, &mut results, &mut existing);
+        }
+
+        // Pass 6: Base64 decoded (detect and decode base64 blobs)
+        if let Some(decoded) = Self::decode_base64_content(text) {
+            let decoded_norm = Self::normalize_input(&decoded);
+            self.merge_pass(&decoded_norm, &mut results, &mut existing);
+        }
+
+        // Pass 7: ROT13 decoded (letter rotation)
+        let rot13 = Self::decode_rot13(&normalized);
+        if rot13 != normalized {
+            self.merge_pass(&rot13, &mut results, &mut existing);
+        }
+
+        // Pass 8: Homoglyph normalized (Cyrillic/Greek lookalikes → Latin)
+        let homoglyph_norm = Self::normalize_homoglyphs(&normalized);
+        if homoglyph_norm != normalized {
+            self.merge_pass(&homoglyph_norm, &mut results, &mut existing);
         }
 
         results
+    }
+
+    /// Run detect_inner on a text variant and merge new results.
+    fn merge_pass<'a>(
+        &'a self,
+        text: &str,
+        results: &mut Vec<PatternMatch<'a>>,
+        existing: &mut std::collections::HashSet<&'a str>,
+    ) {
+        for r in self.detect_inner(text) {
+            if existing.insert(r.pattern.id) {
+                results.push(r);
+            }
+        }
     }
 
     fn detect_inner(&self, text: &str) -> Vec<PatternMatch<'_>> {
@@ -299,6 +343,185 @@ impl PatternRegistry {
             result.push(ch);
         }
         result
+    }
+
+    /// URL-decode percent-encoded characters (%20 → space, %2F → /, etc.)
+    fn url_decode(text: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' && i + 2 < bytes.len() {
+                let hi = bytes[i + 1];
+                let lo = bytes[i + 2];
+                if let (Some(h), Some(l)) = (hex_val(hi), hex_val(lo)) {
+                    let byte = (h << 4) | l;
+                    // Only decode printable ASCII to avoid injecting control chars
+                    if (0x20..=0x7E).contains(&byte) {
+                        result.push(byte as char);
+                    } else {
+                        result.push('%');
+                        result.push(hi as char);
+                        result.push(lo as char);
+                    }
+                    i += 3;
+                    continue;
+                }
+            }
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+        result
+    }
+
+    /// Normalize leet speak substitutions back to Latin letters.
+    fn normalize_leet(text: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        for ch in text.chars() {
+            result.push(match ch {
+                '0' => 'o',
+                '1' => 'i',
+                '3' => 'e',
+                '4' => 'a',
+                '5' => 's',
+                '7' => 't',
+                '@' => 'a',
+                other => other,
+            });
+        }
+        result
+    }
+
+    /// Collapse single-character-spaced text: "i g n o r e" → "ignore"
+    ///
+    /// Detects runs where single non-space characters are separated by spaces,
+    /// and collapses them into continuous text.
+    fn collapse_char_spacing(text: &str) -> String {
+        let chars: Vec<char> = text.chars().collect();
+        if chars.len() < 5 {
+            return text.to_string();
+        }
+
+        // Check if the text looks like character-spaced: at least 4 occurrences
+        // of "X " where X is a single non-space character
+        let mut spaced_count = 0;
+        let mut i = 0;
+        while i + 1 < chars.len() {
+            if !chars[i].is_whitespace() && i + 1 < chars.len() && chars[i + 1] == ' ' {
+                // Check if the previous non-space char was also single
+                if i == 0 || chars[i - 1] == ' ' {
+                    spaced_count += 1;
+                }
+            }
+            i += 1;
+        }
+
+        if spaced_count < 4 {
+            return text.to_string();
+        }
+
+        // Collapse: remove spaces between single characters
+        let mut result = String::with_capacity(chars.len());
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i].is_whitespace() {
+                // Check if this space is between two single chars
+                let prev_single = i > 0 && !chars[i - 1].is_whitespace()
+                    && (i < 2 || chars[i - 2].is_whitespace());
+                let next_single = i + 1 < chars.len() && !chars[i + 1].is_whitespace()
+                    && (i + 2 >= chars.len() || chars[i + 2].is_whitespace() || chars[i + 2] == ' ');
+
+                if prev_single && next_single {
+                    // Skip this space — it's between spaced-out single chars
+                    i += 1;
+                    continue;
+                }
+            }
+            result.push(chars[i]);
+            i += 1;
+        }
+        result
+    }
+
+    /// Detect and decode base64-encoded content in the text.
+    ///
+    /// Looks for sequences of 20+ base64 characters optionally ending with `=`.
+    /// Returns the original text with base64 blobs replaced by decoded content,
+    /// or None if no base64 was found.
+    fn decode_base64_content(text: &str) -> Option<String> {
+        use regex::Regex;
+        // Match standalone base64 blobs (20+ chars, A-Za-z0-9+/, optional = padding)
+        let re = Regex::new(r"[A-Za-z0-9+/]{20,}={0,2}").ok()?;
+
+        let mut found_any = false;
+        let mut result = text.to_string();
+
+        for mat in re.find_iter(text) {
+            let blob = mat.as_str();
+            // Try to decode
+            if let Ok(decoded_bytes) = base64_decode(blob) {
+                if let Ok(decoded_str) = std::str::from_utf8(&decoded_bytes) {
+                    // Only use if decoded text is mostly printable
+                    if decoded_str.chars().all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace()) {
+                        result = result.replacen(blob, decoded_str, 1);
+                        found_any = true;
+                    }
+                }
+            }
+        }
+
+        if found_any { Some(result) } else { None }
+    }
+
+    /// ROT13 decode: rotate each letter by 13 positions.
+    fn decode_rot13(text: &str) -> String {
+        text.chars()
+            .map(|c| match c {
+                'a'..='m' | 'A'..='M' => (c as u8 + 13) as char,
+                'n'..='z' | 'N'..='Z' => (c as u8 - 13) as char,
+                other => other,
+            })
+            .collect()
+    }
+
+    /// Normalize Unicode homoglyphs (Cyrillic, Greek lookalikes) to Latin equivalents.
+    fn normalize_homoglyphs(text: &str) -> String {
+        text.chars()
+            .map(|c| match c {
+                // Cyrillic lookalikes
+                '\u{0430}' => 'a', // а → a
+                '\u{0435}' => 'e', // е → e
+                '\u{0456}' => 'i', // і → i
+                '\u{043E}' => 'o', // о → o
+                '\u{0440}' => 'p', // р → p
+                '\u{0441}' => 'c', // с → c
+                '\u{0443}' => 'y', // у → y
+                '\u{0445}' => 'x', // х → x
+                '\u{0410}' => 'A', // А → A
+                '\u{0412}' => 'B', // В → B
+                '\u{0415}' => 'E', // Е → E
+                '\u{041A}' => 'K', // К → K
+                '\u{041C}' => 'M', // М → M
+                '\u{041D}' => 'H', // Н → H
+                '\u{041E}' => 'O', // О → O
+                '\u{0420}' => 'P', // Р → P
+                '\u{0421}' => 'C', // С → C
+                '\u{0422}' => 'T', // Т → T
+                '\u{0425}' => 'X', // Х → X
+                // Greek lookalikes
+                '\u{03B1}' => 'a', // α → a
+                '\u{03B5}' => 'e', // ε → e
+                '\u{03B9}' => 'i', // ι → i
+                '\u{03BF}' => 'o', // ο → o
+                '\u{03C1}' => 'p', // ρ → p
+                '\u{03BA}' => 'k', // κ → k
+                '\u{03BD}' => 'v', // ν → v
+                // Fullwidth Latin
+                '\u{FF41}'..='\u{FF5A}' => ((c as u32 - 0xFF41 + 0x61) as u8) as char, // ａ-ｚ → a-z
+                '\u{FF21}'..='\u{FF3A}' => ((c as u32 - 0xFF21 + 0x41) as u8) as char, // Ａ-Ｚ → A-Z
+                other => other,
+            })
+            .collect()
     }
 
     fn check_special(&self, cp: &CompiledPattern, text: &str) -> bool {
@@ -469,4 +692,43 @@ impl PromptPatterns {
     pub fn is_excessive_length(prompt: &str) -> bool {
         prompt.len() > Self::MAX_SAFE_LENGTH
     }
+}
+
+/// Convert a hex ASCII character to its numeric value.
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Simple base64 decoder (no external dependency needed).
+fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
+    let input = input.trim_end_matches('=');
+    let mut result = Vec::with_capacity(input.len() * 3 / 4);
+
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+
+    for &b in input.as_bytes() {
+        let val = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return Err(()),
+        };
+        buf = (buf << 6) | val as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            result.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+
+    Ok(result)
 }

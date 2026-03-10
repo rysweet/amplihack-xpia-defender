@@ -139,6 +139,30 @@ impl PatternRegistry {
 
     /// Detect all matching patterns in the given text.
     pub fn detect(&self, text: &str) -> Vec<PatternMatch<'_>> {
+        // Run detection on normalized input (whitespace collapsed to spaces)
+        let normalized = Self::normalize_input(text);
+        let mut results = self.detect_inner(&normalized);
+
+        // Also run on stripped input (newlines/tabs removed entirely) to catch
+        // evasion via mid-word line breaks like "act\nas DAN" → "actas DAN"
+        // won't match, but "act a\ns DAN" → "act as DAN" will.
+        let stripped = Self::strip_whitespace_evasion(text);
+        if stripped != normalized {
+            let stripped_results = self.detect_inner(&stripped);
+            // Merge: add any patterns not already detected
+            let existing: std::collections::HashSet<&str> =
+                results.iter().map(|r| r.pattern.id).collect();
+            for r in stripped_results {
+                if !existing.contains(r.pattern.id) {
+                    results.push(r);
+                }
+            }
+        }
+
+        results
+    }
+
+    fn detect_inner(&self, text: &str) -> Vec<PatternMatch<'_>> {
         let mut matched_indices = std::collections::HashSet::new();
         let mut results = Vec::new();
 
@@ -231,6 +255,50 @@ impl PatternRegistry {
             .filter(|cp| cp.pattern.severity == "high" || cp.pattern.severity == "critical")
             .map(|cp| &cp.pattern)
             .collect()
+    }
+
+    /// Normalize input text before pattern matching.
+    ///
+    /// Collapses whitespace (newlines, tabs, carriage returns) to single spaces
+    /// and strips zero-width Unicode characters that could bypass detection.
+    fn normalize_input(text: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        let mut prev_ws = false;
+        for ch in text.chars() {
+            // Strip zero-width characters (U+200B-U+200F, U+FEFF, U+2060, U+00AD)
+            if matches!(ch, '\u{200B}'..='\u{200F}' | '\u{FEFF}' | '\u{2060}' | '\u{00AD}') {
+                continue;
+            }
+            if ch.is_whitespace() {
+                if !prev_ws {
+                    result.push(' ');
+                }
+                prev_ws = true;
+            } else {
+                result.push(ch);
+                prev_ws = false;
+            }
+        }
+        result
+    }
+
+    /// Second normalization pass: strip newlines/tabs entirely (don't replace with space).
+    /// Catches mid-word line break evasion like "act\nas" → "actas" won't match,
+    /// but "cat /et\nc/shadow" → "cat /etc/shadow" will.
+    fn strip_whitespace_evasion(text: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        for ch in text.chars() {
+            // Strip zero-width characters
+            if matches!(ch, '\u{200B}'..='\u{200F}' | '\u{FEFF}' | '\u{2060}' | '\u{00AD}') {
+                continue;
+            }
+            // Strip only newlines, carriage returns, vertical tabs (not spaces or regular tabs)
+            if matches!(ch, '\n' | '\r' | '\x0B' | '\x0C') {
+                continue;
+            }
+            result.push(ch);
+        }
+        result
     }
 
     fn check_special(&self, cp: &CompiledPattern, text: &str) -> bool {

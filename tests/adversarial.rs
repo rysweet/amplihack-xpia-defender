@@ -1,7 +1,7 @@
 //! Adversarial corpus tests — zero false negatives on curated attack patterns.
 
 use amplihack_xpia_defender::{
-    ContentType, RiskLevel, SecurityConfiguration, SecurityLevel, XPIADefender,
+    ContentType, PatternRegistry, RiskLevel, SecurityConfiguration, SecurityLevel, XPIADefender,
 };
 
 fn defender() -> XPIADefender {
@@ -359,3 +359,33 @@ fn health_check_returns_valid() {
     assert_eq!(health["patterns_loaded"], 37);
 }
 
+
+/// Structural invariant: every pattern's own examples must be detected.
+/// This catches the AC pre-filter gap bug class where a regex matches
+/// but the AC literal set doesn't contain a substring from the example text.
+#[test]
+fn every_pattern_example_is_detected() {
+    use amplihack_xpia_defender::patterns::definitions::all_patterns;
+    let registry = PatternRegistry::compile(all_patterns()).expect("registry must build");
+    let mut failures = Vec::new();
+
+    for cp in registry.all_patterns() {
+        for example in cp.examples {
+            let matches = registry.detect(example);
+            let found = matches.iter().any(|m| m.pattern.id == cp.id);
+            if !found {
+                let other_ids: Vec<&str> = matches.iter().map(|m| m.pattern.id).collect();
+                failures.push(format!(
+                    "{} example not self-detected: {:?} (matched by: {:?})",
+                    cp.id, example, other_ids
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "Pattern example self-test failures:\n{}",
+        failures.join("\n")
+    );
+}

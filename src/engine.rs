@@ -338,7 +338,7 @@ impl XPIADefender {
         );
 
         ValidationResult {
-            is_valid: risk_level != RiskLevel::Critical,
+            is_valid: !matches!(risk_level, RiskLevel::High | RiskLevel::Critical),
             risk_level,
             threats,
             recommendations: content_result.recommendations,
@@ -525,7 +525,7 @@ impl XPIADefender {
         );
 
         Ok(ValidationResult {
-            is_valid: risk_level != RiskLevel::Critical,
+            is_valid: !matches!(risk_level, RiskLevel::High | RiskLevel::Critical),
             risk_level,
             threats,
             recommendations,

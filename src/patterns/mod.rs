@@ -40,6 +40,8 @@ pub enum SpecialMatch {
     None,
     /// Match based on text length (for context window overflow).
     LengthAtLeast(usize),
+    /// Regex match but suppress if preceded by negation words (not, don't, no, does not).
+    NegationAware,
 }
 
 /// A compiled pattern ready for matching.
@@ -141,7 +143,12 @@ impl PatternRegistry {
         let mut results = Vec::new();
 
         // Tier 1: AC pre-filter — find candidate patterns via literal matches
-        for mat in self.ac_automaton.find_iter(text) {
+        // Uses find_overlapping_iter to ensure longer literals like "/etc/sudoers"
+        // aren't shadowed by shorter ones like "sudo" that match inside them.
+        let mut state = aho_corasick::automaton::OverlappingState::start();
+        loop {
+            self.ac_automaton.find_overlapping(text, &mut state);
+            let Some(mat) = state.get_match() else { break };
             let pattern_indices = &self.ac_to_patterns[mat.pattern().as_usize()];
             for &pattern_idx in pattern_indices {
                 if matched_indices.insert(pattern_idx) {
@@ -228,14 +235,14 @@ impl PatternRegistry {
 
     fn check_special(&self, cp: &CompiledPattern, text: &str) -> bool {
         match cp.special {
-            SpecialMatch::None => true,
+            SpecialMatch::None | SpecialMatch::NegationAware => true,
             SpecialMatch::LengthAtLeast(n) => text.len() >= n,
         }
     }
 
     fn check_special_only(&self, cp: &CompiledPattern, text: &str) -> bool {
         match cp.special {
-            SpecialMatch::None => false,
+            SpecialMatch::None | SpecialMatch::NegationAware => false,
             SpecialMatch::LengthAtLeast(n) => text.len() >= n,
         }
     }
@@ -245,12 +252,34 @@ impl PatternRegistry {
         cp: &'a CompiledPattern,
         text: &str,
     ) -> Option<PatternMatch<'a>> {
-        cp.regex.find(text).map(|m| PatternMatch {
-            pattern: &cp.pattern,
-            location: Some(MatchLocation {
-                start: m.start(),
-                end: m.end(),
-            }),
+        cp.regex.find(text).and_then(|m| {
+            // For NegationAware patterns, check if the match is preceded by negation
+            if cp.special == SpecialMatch::NegationAware {
+                let before = &text[..m.start()];
+                let before_lower = before.to_lowercase();
+                let before_trimmed = before_lower.trim_end();
+                if before_trimmed.ends_with("not")
+                    || before_trimmed.ends_with("no")
+                    || before_trimmed.ends_with("n't")
+                    || before_trimmed.ends_with("don't")
+                    || before_trimmed.ends_with("doesn't")
+                    || before_trimmed.ends_with("does not")
+                    || before_trimmed.ends_with("cannot")
+                    || before_trimmed.ends_with("shouldn't")
+                    || before_trimmed.ends_with("should not")
+                    || before_trimmed.ends_with("never")
+                    || before_trimmed.ends_with("without")
+                {
+                    return None;
+                }
+            }
+            Some(PatternMatch {
+                pattern: &cp.pattern,
+                location: Some(MatchLocation {
+                    start: m.start(),
+                    end: m.end(),
+                }),
+            })
         })
     }
 }

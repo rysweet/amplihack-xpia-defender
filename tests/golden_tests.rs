@@ -563,7 +563,3 @@ fn pattern_count_is_correct() {
     let reg = registry();
     assert_eq!(reg.len(), 40);
 }
-
-
-
-

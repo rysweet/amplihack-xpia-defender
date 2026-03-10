@@ -310,7 +310,10 @@ impl PatternRegistry {
         let mut prev_ws = false;
         for ch in text.chars() {
             // Strip zero-width characters (U+200B-U+200F, U+FEFF, U+2060, U+00AD)
-            if matches!(ch, '\u{200B}'..='\u{200F}' | '\u{FEFF}' | '\u{2060}' | '\u{00AD}') {
+            if matches!(
+                ch,
+                '\u{200B}'..='\u{200F}' | '\u{FEFF}' | '\u{2060}' | '\u{00AD}'
+            ) {
                 continue;
             }
             if ch.is_whitespace() {
@@ -333,7 +336,10 @@ impl PatternRegistry {
         let mut result = String::with_capacity(text.len());
         for ch in text.chars() {
             // Strip zero-width characters
-            if matches!(ch, '\u{200B}'..='\u{200F}' | '\u{FEFF}' | '\u{2060}' | '\u{00AD}') {
+            if matches!(
+                ch,
+                '\u{200B}'..='\u{200F}' | '\u{FEFF}' | '\u{2060}' | '\u{00AD}'
+            ) {
                 continue;
             }
             // Strip only newlines, carriage returns, vertical tabs (not spaces or regular tabs)
@@ -426,10 +432,14 @@ impl PatternRegistry {
         while i < chars.len() {
             if chars[i].is_whitespace() {
                 // Check if this space is between two single chars
-                let prev_single = i > 0 && !chars[i - 1].is_whitespace()
+                let prev_single = i > 0
+                    && !chars[i - 1].is_whitespace()
                     && (i < 2 || chars[i - 2].is_whitespace());
-                let next_single = i + 1 < chars.len() && !chars[i + 1].is_whitespace()
-                    && (i + 2 >= chars.len() || chars[i + 2].is_whitespace() || chars[i + 2] == ' ');
+                let next_single = i + 1 < chars.len()
+                    && !chars[i + 1].is_whitespace()
+                    && (i + 2 >= chars.len()
+                        || chars[i + 2].is_whitespace()
+                        || chars[i + 2] == ' ');
 
                 if prev_single && next_single {
                     // Skip this space — it's between spaced-out single chars
@@ -462,7 +472,10 @@ impl PatternRegistry {
             if let Ok(decoded_bytes) = base64_decode(blob) {
                 if let Ok(decoded_str) = std::str::from_utf8(&decoded_bytes) {
                     // Only use if decoded text is mostly printable
-                    if decoded_str.chars().all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace()) {
+                    if decoded_str
+                        .chars()
+                        .all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
+                    {
                         result = result.replacen(blob, decoded_str, 1);
                         found_any = true;
                     }
@@ -470,7 +483,11 @@ impl PatternRegistry {
             }
         }
 
-        if found_any { Some(result) } else { None }
+        if found_any {
+            Some(result)
+        } else {
+            None
+        }
     }
 
     /// ROT13 decode: rotate each letter by 13 positions.

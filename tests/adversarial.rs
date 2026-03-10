@@ -322,12 +322,7 @@ fn low_security_only_flags_high_and_critical() {
     let mut d = XPIADefender::new(Some(config)).unwrap();
     // Medium severity: base64 encoding label (without actual attack content inside)
     // "aGVsbG8gd29ybGQ=" decodes to "hello world" — benign content
-    let result = d.validate_content(
-        "base64: aGVsbG8gd29ybGQ=",
-        ContentType::Text,
-        None,
-        None,
-    );
+    let result = d.validate_content("base64: aGVsbG8gd29ybGQ=", ContentType::Text, None, None);
     // At Low security, medium-severity patterns should NOT be flagged
     assert!(
         result.threats.is_empty(),
@@ -359,7 +354,6 @@ fn health_check_returns_valid() {
     assert_eq!(health["status"], "healthy");
     assert_eq!(health["patterns_loaded"], 40);
 }
-
 
 /// Structural invariant: every pattern's own examples must be detected.
 /// This catches the AC pre-filter gap bug class where a regex matches

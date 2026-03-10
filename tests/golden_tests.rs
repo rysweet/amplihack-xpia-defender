@@ -554,14 +554,14 @@ fn all_patterns_compile() {
     // This verifies NO pattern is silently skipped
     let reg = registry();
     // 19 original + 12 new (SE003, SE004, PE001, PE002, DE003, DE004, EV001-4, PO005, PO006)
-    assert_eq!(reg.len(), 31, "Expected 31 patterns, got {}", reg.len());
+    assert_eq!(reg.len(), 37, "Expected 37 patterns, got {}", reg.len());
 }
 
 #[test]
 fn pattern_count_is_correct() {
     // Original Python 19 + 12 new patterns for issue #4 coverage gaps
     let reg = registry();
-    assert_eq!(reg.len(), 31);
+    assert_eq!(reg.len(), 37);
 }
 
 

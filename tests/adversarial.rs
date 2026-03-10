@@ -356,6 +356,6 @@ fn health_check_returns_valid() {
     let d = defender();
     let health = d.health_check();
     assert_eq!(health["status"], "healthy");
-    assert_eq!(health["patterns_loaded"], 31);
+    assert_eq!(health["patterns_loaded"], 37);
 }
 

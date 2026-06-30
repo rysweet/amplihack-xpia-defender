@@ -1,0 +1,35 @@
+# cargo-deny configuration — supply-chain audit gate.
+# Run locally with: cargo deny --all-features check advisories bans licenses sources
+# Schema targets cargo-deny 0.18+ (CI pins EmbarkStudios/cargo-deny-action).
+
+[graph]
+all-features = true
+
+[advisories]
+# Fail on security vulnerabilities and yanked crates (defaults).
+# Add advisory IDs here with a justification only if an upstream fix is
+# unavailable; prefer upgrading the dependency instead.
+ignore = []
+
+[licenses]
+# Allow-list limited to the licenses actually present in the dependency tree.
+# Do not blanket-allow — add a license here only after confirming a crate uses it.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Surface duplicate dependency versions without failing the build.
+multiple-versions = "warn"
+# Reject wildcard ("*") version requirements outright.
+wildcards = "deny"
+
+[sources]
+# Only crates.io is trusted; reject unknown registries and any git sources.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

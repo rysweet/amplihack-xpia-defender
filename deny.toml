@@ -25,7 +25,8 @@ confidence-threshold = 0.8
 [bans]
 # Surface duplicate dependency versions without failing the build.
 multiple-versions = "warn"
-wildcards = "allow"
+# Reject wildcard ("*") version requirements outright.
+wildcards = "deny"
 
 [sources]
 # Only crates.io is trusted; reject unknown registries and any git sources.
